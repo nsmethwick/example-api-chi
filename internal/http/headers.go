@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/fastly/api-boilerplate/internal/config"
+	"github.com/erp-api/internal/config"
 )
 
 // WithHeaders adds common HTTP response headers if not already set.

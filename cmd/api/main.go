@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	h "github.com/erp-api/internal/http"
+	"github.com/erp-api/internal/middleware"
 )
 
 var db *sql.DB

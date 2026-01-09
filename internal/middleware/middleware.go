@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	h "github.com/fastly/api-boilerplate/internal/http"
+	h "github.com/erp-api/internal/http"
 )
 
 // Decorator is a middleware function.
