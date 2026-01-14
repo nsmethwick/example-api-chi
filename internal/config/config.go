@@ -1,99 +1,89 @@
 package config
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
+	"log/slog"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
-type (
-	// Environment represents the cluster environment.
-	Environment string
-)
+type API struct {
+	Address string
+	Host    string
+	Port    string
+}
 
-var (
-	// EnvironmentLocal is the local developer environment.
-	EnvironmentLocal Environment = "local"
-	// EnvironmentDev is the dev cluster environment.
-	EnvironmentDev Environment = "dev"
-	// EnvironmentStaging is the stage cluster environment.
-	EnvironmentStaging Environment = "stg"
-	// EnvironmentProduction is the production cluster environment.
-	EnvironmentProduction Environment = "prd"
-	// AllEnvironments is an aggregate of all environments.
-	AllEnvironments = []Environment{EnvironmentLocal, EnvironmentDev, EnvironmentStaging, EnvironmentProduction}
-)
+type DB struct {
+	MYSQL_DATABASE      string
+	MYSQL_PASSWORD      string
+	MYSQL_USER          string
+	MYSQL_ROOT_PASSWORD string
+	DSN                 string
+}
 
-// GetEnvironment returns the environment object.
-func GetEnvironment(v string) Environment {
-	for _, e := range AllEnvironments {
-		if e.String() == v {
-			return e
+func SetUpAPI() API {
+	api := API{
+		Host:    os.Getenv("API_HOST"),
+		Port:    os.Getenv("API_PORT"),
+		Address: os.Getenv("API_ADDRESS"),
+	}
+	return api
+}
+
+func SetUpDB() DB {
+	db := DB{
+		MYSQL_DATABASE:      os.Getenv("MYSQL_DATABASE"),
+		MYSQL_PASSWORD:      os.Getenv("MYSQL_PASSWORD"),
+		MYSQL_USER:          os.Getenv("MYSQL_USER"),
+		MYSQL_ROOT_PASSWORD: os.Getenv("MYSQL_ROOT_PASSWORD"),
+		DSN:                 os.Getenv("MYSQL_USER") + ":" + os.Getenv("MYSQL_PASSWORD") + "@tcp(localhost:3306)/" + os.Getenv("MYSQL_DATABASE") + "?parseTime=true",
+	}
+	return db
+}
+
+func LoadEnvironmentVariables(env string) {
+	// This will load .env files based on args
+	// 1: local == .env.local
+	// 2: staging == .env.staging
+	// 3: prod == .env
+
+	// If the files are not found, we will default to using .env
+	// If .env is not found, we just proceed without loading a file
+
+	candidates := []string{}
+	switch env {
+	case "local", "":
+		// default to local during development when env is empty
+		candidates = []string{".env.local", ".env"}
+	case "staging":
+		candidates = []string{".env.staging", ".env"}
+	case "prod":
+		candidates = []string{".env"}
+	default:
+		candidates = []string{".env"}
+	}
+
+	for _, envFile := range candidates {
+		if doesFileExist(envFile) {
+			slog.Info("Loading Environment Variables from " + envFile)
+			if err := godotenv.Load(envFile); err != nil {
+				slog.Error("failed to load env file", "file", envFile, "err", err)
+			}
+			return
 		}
 	}
-	return EnvironmentDev
+
+	slog.Info("No env file found; proceeding without loading from file")
+
 }
 
-// String returns the name of the environment
-func (e Environment) String() string {
-	return string(e)
-}
+func doesFileExist(fileName string) bool {
+	_, error := os.Stat(fileName)
 
-// Config contains all the values necessary to construct a Server
-type Config struct {
-	Addr            string
-	CacheDefaultTTL int
-	Environment     Environment // Environment name, e.g. "dev"
-	Metrics         Metrics
-	OtelDisabled    bool
-	Secrets         Secrets
-}
-
-// Metrics contains the metric server address and port.
-type Metrics struct {
-	Host string
-	Port int
-}
-
-// Secrets contains Vault secrets exposed to the config.
-//
-// NOTE: The `Foo` secret here is used as an example you would modify/remove.
-// Refer to ../../docs/secrets.md for details.
-type Secrets struct {
-	Foo string
-}
-
-// Load reads json from cfgPath and returns a populated Config
-func Load(cfgPath string) (*Config, error) {
-	var cfg Config
-	file, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open cfg file '%s': %v", cfgPath, err)
+	// check if error is "file not exists"
+	if os.IsNotExist(error) {
+		return false
+	} else {
+		return true
 	}
-	if err = json.Unmarshal(file, &cfg); err != nil {
-		return nil, fmt.Errorf("unable to unmarshal cfg file '%s': %v", cfgPath, err)
-	}
-	return &cfg, nil
-}
-
-// Validate checks specific fields contain valid values.
-func (cfg *Config) Validate() error {
-	var result []error
-	if cfg.Addr == "" {
-		result = append(result, errors.New("missing Addr config"))
-	}
-	if cfg.Environment == "" {
-		result = append(result, errors.New("missing Environment config"))
-	}
-	validEnvironment := false
-	for _, v := range AllEnvironments {
-		if v == cfg.Environment {
-			validEnvironment = true
-		}
-	}
-	if !validEnvironment {
-		result = append(result, fmt.Errorf("invalid Environment config: %q", cfg.Environment))
-	}
-	return errors.Join(result...)
 }

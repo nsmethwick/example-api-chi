@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"erp-api/internal/config"
+	"erp-api/internal/routes"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,22 +13,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
+	"erp-api/internal/db"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/sync/errgroup"
-
-	h "github.com/erp-api/internal/http"
-	"github.com/erp-api/internal/middleware"
 )
-
-var db *sql.DB
 
 func main() {
 	flag.Parse()
+	config.LoadEnvironmentVariables("")
 
 	// NOTE: Moving the logic to `app()` allows us to honour `defer` calls.
 	if err := app(); err != nil {
@@ -37,77 +36,60 @@ func main() {
 
 func app() error {
 	ctx := context.Background()
-	// logging.Level.Set(slog.LevelWarn) // omit this line if you want slog.LevelInfo
-	// logger := logging.NewLogger()
+	apiConfig := config.SetUpAPI()
+	dbConfig := config.SetUpDB()
 
-	// cfg, err := config.Load(*cfgPath)
-	// if err != nil {
-	// 	logger.LogAttrs(ctx, slog.LevelError, "config_load", slog.Any("error", fmt.Errorf("unable to load config: %w", err)))
-	// }
-	// if err := cfg.Validate(); err != nil {
-	// 	logger.LogAttrs(ctx, slog.LevelError, "config_validate", slog.Any("error", fmt.Errorf("invalid config: %w", err)))
-	// }
+	if err := db.Init(dbConfig.DSN); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.WarnContext(ctx, "error closing database", "error", err)
+		}
+	}()
 
-	g := new(errgroup.Group)
-	timeout := time.Duration(10) * time.Second //nolint:gomnd
+	slog.Info("Connected to MySQL database")
 
-	// NOTE: All future log entries will include the image tag.
-	// e.g. <DATE_TIME>-<GIT_BRANCH>-<GIT_COMMIT>
-	// slog = slog.With(slog.String("build", ImageTag))
+	apiAddr := apiConfig.Address
 
-	// Routing
-	mux := http.NewServeMux()
-
-	// NOTE: We have separate pipelines.
-	// One for the healthcheck and another for all other endpoints.
-	// This is because we want to avoid logging/tracing the healthcheck endpoint.
-	// For some apps, tracing the healthcheck can result in poor performance.
-
-	pipelineHealth := middleware.New(middleware.AddRoutePattern(mux), metric.WithHealthCheckMetrics, h.WithHeaders(cfg))
-	healthHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status": "success", "image_tag": "%s"}`, ImageTag)
-	})
-	mux.Handle("/healthcheck", pipelineHealth.Decorate(healthHandler))
-
-	// NOTE: The order of the middleware is deliberate.
-	// AddRoutePattern updates the request context with the route pattern.
-	// WithSpan starts a trace and updates the request context with a Trace ID.
-	// WithRouteAndTrace attaches both the route pattern and Trace ID to the slog.
-	// WithMetrics, WithRouteTag and WithParamAttrs all check for the route pattern added by WithRoutePattern.
-
-	pipeline := middleware.New(
-		middleware.AddRoutePattern(mux),
-		traces.WithMessageEvents,
-		logging.WithRouteAndTrace(logger),
-		metric.WithMetrics,
-		traces.WithRouteTag,
-		traces.WithParamAttrs,
-		h.WithHeaders(cfg),
+	slog.LogAttrs(ctx, slog.LevelInfo, "service_starting",
+		slog.Int("gomaxprocs", runtime.GOMAXPROCS(0)),
+		slog.String("api_server_addr", apiAddr),
 	)
 
-	exampleHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	g := new(errgroup.Group)
+	timeout := time.Duration(10) * time.Second
+
+	// Routing
+	r := chi.NewRouter()
+
+	// Route Registration
+
+	// Catch-all Route
+	r.Get("/", (func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"endpoint": "example"}`)
-	})
-	mux.Handle("/example/{id}", pipeline.Decorate(exampleHandler))
+		json.NewEncoder(w).Encode(map[string]string{"message": "response"})
+	}))
+
+	// Register /customer
+	r.Route("/customer", routes.CustomerRoutes)
 
 	// API Server
 	apiServer := &http.Server{
-		Addr:              "localhost:3000",
-		Handler:           mux,
+		Addr:              apiAddr,
+		Handler:           r,
 		ReadHeaderTimeout: timeout, // avoid slowloris https://app.deepsource.com/directory/analyzers/go/issues/GO-S2114
 	}
+
 	g.Go(func() error {
 		if err := apiServer.ListenAndServe(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.InfoContext(ctx, "api server stopped")
+				slog.InfoContext(ctx, "api server stopped")
 				return nil
 			}
 			err := fmt.Errorf("api server failed to listen and serve requests: %w", err)
-			logger.LogAttrs(ctx, slog.LevelError, "error handling API requests",
+			slog.LogAttrs(ctx, slog.LevelError, "error handling API requests",
 				slog.Any("error", err),
-				slog.String("metrics_addr", Addr),
 			)
 			return err
 		}
@@ -119,20 +101,13 @@ func app() error {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		signalType := <-quit
-		logger.LogAttrs(ctx, slog.LevelWarn, "http server graceful shutdown",
+		slog.LogAttrs(ctx, slog.LevelWarn, "http server graceful shutdown",
 			slog.String("signal", signalType.String()),
 		)
 		// NOTE: Shutdown is given a separate context from the API server.
-		if err := apiServer.Shutdown(context.Background()); err != nil { //nolint:contextcheck
+		if err := apiServer.Shutdown(context.Background()); err != nil {
 			err := fmt.Errorf("unable to gracefully stop API server: %w", err)
-			logger.LogAttrs(ctx, slog.LevelError, "error shutting down API server",
-				slog.Any("error", err),
-			)
-			return err
-		}
-		if err := Server.Shutdown(context.Background()); err != nil { //nolint:contextcheck
-			err := fmt.Errorf("unable to gracefully stop metrics server: %w", err)
-			logger.LogAttrs(ctx, slog.LevelError, "error shutting down metrics server",
+			slog.LogAttrs(ctx, slog.LevelError, "error shutting down API server",
 				slog.Any("error", err),
 			)
 			return err
@@ -140,95 +115,5 @@ func app() error {
 		return nil
 	})
 
-	return g.Wait() //nolint:wrapcheck
-}
-
-func run() error {
-	logger := slog.Default()
-	logger.Info("Starting API...")
-
-	// do stuff here
-
-	// db
-	cfg := mysql.NewConfig()
-	cfg.User = "root"
-	cfg.Passwd = "root"
-	cfg.Net = "tcp"
-	cfg.Addr = "localhost:8888"
-	cfg.DBName = "customers"
-
-	// Get a database handle.
-	var err error
-	db, err = sql.Open("mysql", cfg.FormatDSN())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
-	}
-	fmt.Println("Connected!")
-
-	// api setup
-	// api := config.SetUpAPI()
-	// address := api.Host + ":" + api.Port
-
-	// r := chi.NewRouter()
-
-	// r.Get("/", HandleRoot)
-
-	// // grouped routes
-	// r.Route("/customer", CustomerRoutes)
-
-	// logger.Info("Listening at: " + address)
-	// http.ListenAndServe(address, r)
-	return nil
-}
-
-// routes for /customer
-func CustomerRoutes(r chi.Router) {
-
-	r.Use(middleware.Logger)
-
-	r.Get("/", HandleListCustomers)           // GET /customer
-	r.Get("/{customerID}", HandleGetCustomer) // GET /customer/123
-	r.Post("/", HandlePostCustomer)           // POST /customer
-}
-
-func HandleListCustomers(w http.ResponseWriter, r *http.Request) {
-	log.Printf("request path: %v", r.URL)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	response := map[string]string{"data": "response body"}
-	json.NewEncoder(w).Encode(response)
-}
-
-func HandleGetCustomer(w http.ResponseWriter, r *http.Request) {
-	log.Printf("request path: %v", r.URL)
-	customerID := chi.URLParam(r, "customerID")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	response := map[string]string{"customer": customerID}
-	json.NewEncoder(w).Encode(response)
-}
-
-func HandlePostCustomer(w http.ResponseWriter, r *http.Request) {
-	log.Printf("request path : %v", r.URL)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	response := map[string]string{"data": "POST response body"}
-	json.NewEncoder(w).Encode(response)
-}
-
-func HandleRoot(w http.ResponseWriter, r *http.Request) {
-	log.Printf("request path: %v", r.URL)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	response := map[string]string{"data": "Welcome to our app!"}
-	json.NewEncoder(w).Encode(response)
+	return g.Wait()
 }

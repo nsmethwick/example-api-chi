@@ -1,0 +1,15 @@
+services:
+  mysql:
+    image: mysql:8.0
+    platform: linux/arm64
+    container_name: example-api-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: example-api
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./initdb.d:/docker-entrypoint-initdb.d
