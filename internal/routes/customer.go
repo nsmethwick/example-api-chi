@@ -2,7 +2,7 @@ package routes
 
 import (
 	"encoding/json"
-	"erp-api/internal/db"
+	"example-api-chi/internal/db"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"

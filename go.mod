@@ -1,4 +1,4 @@
-module erp-api
+module example-api-chi
 
 go 1.25.5
 

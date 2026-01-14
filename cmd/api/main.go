@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"erp-api/internal/config"
-	"erp-api/internal/routes"
 	"errors"
+	"example-api-chi/internal/config"
+	"example-api-chi/internal/routes"
 	"flag"
 	"fmt"
 	"log"
@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"erp-api/internal/db"
+	"example-api-chi/internal/db"
 
 	"github.com/go-chi/chi/v5"
 	_ "github.com/go-sql-driver/mysql"
