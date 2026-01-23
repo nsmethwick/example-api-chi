@@ -1,21 +1,46 @@
-# API Boilerplate
-written in Go using the Chi library
+# {Project Name}
 
-## Summary
-This should have everything you need to start a RESTful API using Go.  There are a few features I'd like to add - ref [TODO.md](todo.md)
+This application has everything you need to start building a RESTful API using Go.  
 
-## Usage
-You will need to install a few dependancies before you can run this project:
-- [install go](https://go.dev/doc/install)
-- install packages via homebrew:
-```
+This project includes:
+- mysql support
+- support for route organization + middleware injection
+- Handler Layer <> Service Layer <> Repository Layer Seperation
+
+Copy the project use the example routes to get a quick start on building an API without have to write all of the boilerplate.
+
+## Setup and Local Development
+
+This project structure is designed to have everything you need for local development.  To get started:
+
+```zsh
+# install required dependancies via homebrew:
 brew install colima docker docker-compose
-```
-- Get package dependancies
-```
-# in project directory
+
+# in the project directory, install go package dependancies
 go mod tidy
 ```
-- Create an `.env.local` or `.env` file by copying and renaming the `.env.example` file
-- Run `make run-with-deps` to start mysql and seed the database then start the app
-- Run `make run` if mysql is already started and you don't want to overwrite any data
+This project depends on an `.env.local` file for configuration definitions.  Copy the `.env.example` file in the project repository and rename it.  Within that file you can change and of the environment variables to suit your config needs as well as add any new environment variables you might want to use
+
+> [Note]: I might update this to read from a json config in the future if managing env files is too annoying
+
+## Running the Project
+
+Make targets have been defined to make running this application easy.  In the project directory run:
+```zsh
+make {make-target}
+```
+### Target: `make run-with-deps`
+This make target will start a mysql instance in a docker container as well as run the sql statements defined in `./local/mysql/initdb.d` to seed the database.  This does require `colima` to be running.
+
+### Target: `make run`
+This will start the application without starting a mysql instance.  This can be used when you have a mysql instance started that you don't want to overwrite, or if you are connecting to an external database.
+
+## Documentation
+Specific documentation for project structure/usage/functionality will be added to the docs folder.  Package overviews will be defined in a README file in each respective folder.
+
+Link: [Docs](./docs/)
+
+## Support
+- Author Info
+- Contact Info

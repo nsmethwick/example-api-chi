@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"example-api-chi/internal/config"
+	"example-api-chi/internal/db"
+	"example-api-chi/internal/repository"
 	"example-api-chi/internal/routes"
+	svc "example-api-chi/internal/service"
 	"flag"
 	"fmt"
 	"log"
@@ -16,8 +19,6 @@ import (
 	"runtime"
 	"syscall"
 	"time"
-
-	"example-api-chi/internal/db"
 
 	"github.com/go-chi/chi/v5"
 	_ "github.com/go-sql-driver/mysql"
@@ -39,16 +40,27 @@ func app() error {
 	apiConfig := config.SetUpAPI()
 	dbConfig := config.SetUpDB()
 
-	if err := db.Init(dbConfig.DSN); err != nil {
+	database, err := db.Init(dbConfig.DSN)
+	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
+		if err := database.Close(); err != nil {
 			slog.WarnContext(ctx, "error closing database", "error", err)
 		}
 	}()
 
 	slog.Info("Connected to MySQL database")
+
+	repo, err := repository.NewRepository(database)
+	if err != nil {
+		log.Fatalf("Failed to create database repository: %v", err)
+	}
+	transactor, err := repository.NewTransactor(database)
+	if err != nil {
+		log.Fatalf("Failed to create transactor repository: %v", err)
+	}
+	service := svc.NewCustomerService(repo, transactor)
 
 	apiAddr := apiConfig.Address
 
@@ -72,7 +84,9 @@ func app() error {
 	}))
 
 	// Register /customer
-	r.Route("/customer", routes.CustomerRoutes)
+	r.Route("/customer", func(r chi.Router) {
+		routes.CustomerRoutes(r, service)
+	})
 
 	// API Server
 	apiServer := &http.Server{
